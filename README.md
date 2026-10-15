@@ -27,7 +27,10 @@ python .\eisenhower_widget.py
 The widget has a frameless, semi-transparent 2-by-2 matrix. Drag the header to
 move it. Double-click a quadrant to add a task. Right-click a task to add a
 subtask or rename it. Checkboxes complete tasks; completed siblings move below
-incomplete siblings. Use the close button to exit.
+incomplete siblings. Use the three-line menu in the title bar to choose and
+persist a separate title color for each quadrant, reset all tasks and settings,
+or view the About information. The settings menu is at the top right, beside
+the close button. Reset requires confirmation and cannot be undone.
 
 ## Desktop icon and startup
 
@@ -70,3 +73,9 @@ shortcut is removed. Back up that file to preserve tasks.
 
 The source code can be published to GitHub, but the task database is excluded
 from version control. Do not commit personal task data.
+
+## License
+
+This project is licensed under the GNU General Public License version 3.0 only
+(GPL-3.0-only). See [LICENSE](./LICENSE) for the license notice and the link to
+the full license terms.

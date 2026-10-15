@@ -8,9 +8,10 @@ from pathlib import Path
 from typing import Callable
 
 from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtGui import QBrush, QColor, QFont
+from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import (
     QApplication,
+    QColorDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -274,8 +275,11 @@ class EisenhowerWidget(QWidget):
         self._connection = sqlite3.connect(self._db_path)
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._initialize_database()
+        self.quadrant_colors = self._load_quadrant_colors()
 
         self.trees: list[TaskTree] = []
+        self.quadrant_title_labels: list[QLabel] = []
+        self.quadrant_markers: list[QFrame] = []
         self._build_ui()
         self._load_tasks()
 
@@ -294,6 +298,70 @@ class EisenhowerWidget(QWidget):
                 )
                 """
             )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS quadrant_settings (
+                    quadrant_id INTEGER PRIMARY KEY CHECK (quadrant_id BETWEEN 0 AND 3),
+                    title_color TEXT NOT NULL
+                )
+                """
+            )
+            self._connection.executemany(
+                """
+                INSERT OR IGNORE INTO quadrant_settings (quadrant_id, title_color)
+                VALUES (?, ?)
+                """,
+                [
+                    (quadrant_id, color)
+                    for quadrant_id, (_, _, color) in enumerate(QUADRANTS)
+                ],
+            )
+
+    def _load_quadrant_colors(self) -> list[str]:
+        colors = [color for _, _, color in QUADRANTS]
+        for quadrant_id, color in self._connection.execute(
+            "SELECT quadrant_id, title_color FROM quadrant_settings"
+        ):
+            if 0 <= quadrant_id < len(colors) and QColor(color).isValid():
+                colors[quadrant_id] = color
+        return colors
+
+    def _choose_quadrant_color(self, quadrant_id: int) -> None:
+        name = QUADRANTS[quadrant_id][0].title()
+        color = QColorDialog.getColor(
+            QColor(self.quadrant_colors[quadrant_id]),
+            self,
+            f"Choose {name} title color",
+        )
+        if not color.isValid():
+            return
+
+        color_name = color.name()
+        try:
+            with self._connection:
+                self._connection.execute(
+                    """
+                    UPDATE quadrant_settings SET title_color = ?
+                    WHERE quadrant_id = ?
+                    """,
+                    (color_name, quadrant_id),
+                )
+        except sqlite3.Error as error:
+            QMessageBox.critical(
+                self,
+                "Could not save settings",
+                f"The title color could not be saved:\n{self._db_path}\n\n{error}",
+            )
+            return
+
+        self.quadrant_colors[quadrant_id] = color_name
+        self.quadrant_title_labels[quadrant_id].setStyleSheet(
+            f"color: {color_name}; font-size: 11px; font-weight: 700; "
+            "letter-spacing: 1px; text-align: left; border: none; padding: 0;"
+        )
+        self.quadrant_markers[quadrant_id].setStyleSheet(
+            f"background: {color_name}; border-radius: 4px;"
+        )
 
     def _build_ui(self) -> None:
         root = QFrame(self)
@@ -316,6 +384,12 @@ class EisenhowerWidget(QWidget):
         title_layout.addWidget(title_text)
         title_layout.addWidget(subtitle)
         header_layout.addWidget(title, 1)
+        menu_button = QPushButton("\u2630")
+        menu_button.setObjectName("menuButton")
+        menu_button.setToolTip("Settings")
+        menu_button.setFixedSize(30, 30)
+        menu_button.clicked.connect(self._show_settings_menu)
+        header_layout.addWidget(menu_button)
         close_button = QPushButton("×")
         close_button.setObjectName("closeButton")
         close_button.setToolTip("Close")
@@ -328,8 +402,8 @@ class EisenhowerWidget(QWidget):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(12)
-        for quadrant_id, (name, description, color) in enumerate(QUADRANTS):
-            card = self._create_card(quadrant_id, name, description, color)
+        for quadrant_id, (name, description, _) in enumerate(QUADRANTS):
+            card = self._create_card(quadrant_id, name, description)
             grid.addWidget(card, quadrant_id // 2, quadrant_id % 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
@@ -345,8 +419,10 @@ class EisenhowerWidget(QWidget):
             QWidget { color: #e7eaf0; font-family: "Segoe UI"; }
             QFrame#root { background: rgba(17, 22, 32, 238); border: 1px solid rgba(255,255,255,30); border-radius: 18px; }
             QFrame#quadrantCard { background: rgba(255,255,255,10); border: 1px solid rgba(255,255,255,18); border-radius: 13px; }
-            QPushButton#windowTitle { color: #f3f4f6; font-size: 13px; font-weight: 700; text-align: left; border: none; padding: 0; }
-            QPushButton#subtitle { color: #929baa; font-size: 11px; text-align: left; border: none; padding: 0; }
+            QLabel#windowTitle { color: #f3f4f6; font-size: 13px; font-weight: 700; }
+            QLabel#subtitle { color: #929baa; font-size: 11px; }
+            QPushButton#menuButton { color: #aab1bd; background: transparent; border: none; border-radius: 8px; font-size: 18px; }
+            QPushButton#menuButton:hover { color: white; background: rgba(255,255,255,24); }
             QPushButton#closeButton { color: #aab1bd; background: transparent; border: none; border-radius: 8px; font-size: 20px; }
             QPushButton#closeButton:hover { color: white; background: rgba(255,255,255,24); }
             QLabel { border: none; background: transparent; }
@@ -361,8 +437,107 @@ class EisenhowerWidget(QWidget):
             """
         )
 
+    def _show_settings_menu(self) -> None:
+        button = self.sender()
+        if not isinstance(button, QPushButton):
+            return
+
+        menu = QMenu(self)
+        colors_menu = menu.addMenu("Change colors")
+        if colors_menu is not None:
+            for quadrant_id, (name, _, _) in enumerate(QUADRANTS):
+                action = colors_menu.addAction(f"{name.title()} title color…")
+                if action is None:
+                    continue
+
+                def choose_color(selected_id: int) -> Callable[[], None]:
+                    def open_dialog() -> None:
+                        self._choose_quadrant_color(selected_id)
+
+                    return open_dialog
+
+                action.triggered.connect(choose_color(quadrant_id))
+        menu.addSeparator()
+        reset_action = menu.addAction("Reset user data")
+        if reset_action is not None:
+            reset_action.triggered.connect(self._confirm_reset_user_data)
+        about_action = menu.addAction("About")
+        if about_action is not None:
+            about_action.triggered.connect(self._show_about)
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+
+    def _confirm_reset_user_data(self) -> None:
+        confirmation = QMessageBox(self)
+        confirmation.setIcon(QMessageBox.Icon.Warning)
+        confirmation.setWindowTitle("Reset user data")
+        confirmation.setText(
+            "Delete all tasks and subtasks, and reset all quadrant title colors?"
+        )
+        confirmation.setInformativeText("This action cannot be undone.")
+        confirmation.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        )
+        confirmation.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if confirmation.exec() == QMessageBox.StandardButton.Yes:
+            self._reset_user_data()
+
+    def _reset_user_data(self) -> None:
+        default_colors = [color for _, _, color in QUADRANTS]
+        try:
+            with self._connection:
+                self._connection.execute("DELETE FROM tasks")
+                self._connection.execute(
+                    "DELETE FROM sqlite_sequence WHERE name = 'tasks'"
+                )
+                self._connection.executemany(
+                    """
+                    UPDATE quadrant_settings SET title_color = ?
+                    WHERE quadrant_id = ?
+                    """,
+                    [
+                        (color, quadrant_id)
+                        for quadrant_id, color in enumerate(default_colors)
+                    ],
+                )
+        except sqlite3.Error as error:
+            QMessageBox.critical(
+                self,
+                "Could not reset user data",
+                f"Your tasks and settings were not reset:\n{self._db_path}\n\n{error}",
+            )
+            return
+
+        self._loading = True
+        for tree in self.trees:
+            tree.clear()
+        self._loading = False
+        self.quadrant_colors = default_colors
+        for quadrant_id, color in enumerate(default_colors):
+            self.quadrant_title_labels[quadrant_id].setStyleSheet(
+                f"color: {color}; font-size: 11px; font-weight: 700; "
+                "letter-spacing: 1px; text-align: left; border: none; padding: 0;"
+            )
+            self.quadrant_markers[quadrant_id].setStyleSheet(
+                f"background: {color}; border-radius: 4px;"
+            )
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "About Eisenhower Matrix",
+            """
+            <h3>Eisenhower Matrix</h3>
+            <p>A lightweight, local-only task tracker for organizing work by
+            urgency and importance. Tasks and settings stay in a local SQLite
+            database on this computer.</p>
+            <p>Licensed under the GNU General Public License, version 3.0 only
+            (GPL-3.0-only). The license terms are available at
+            <a href="https://www.gnu.org/licenses/gpl-3.0.html">gnu.org/licenses/gpl-3.0.html</a>.</p>
+            """,
+        )
+
     def _create_card(
-        self, quadrant_id: int, name: str, description: str, color: str
+        self, quadrant_id: int, name: str, description: str
     ) -> QFrame:
         card = QFrame()
         card.setObjectName("quadrantCard")
@@ -373,17 +548,22 @@ class EisenhowerWidget(QWidget):
         heading_row = QHBoxLayout()
         marker = QFrame()
         marker.setFixedSize(8, 8)
-        marker.setStyleSheet(f"background: {color}; border-radius: 4px;")
+        selected_color = self.quadrant_colors[quadrant_id]
+        marker.setStyleSheet(
+            f"background: {selected_color}; border-radius: 4px;"
+        )
         heading_row.addWidget(marker)
 
         heading = QLabel(name)
         heading.setStyleSheet(
-            f"color: {color}; font-size: 11px; font-weight: 700; "
+            f"color: {selected_color}; font-size: 11px; font-weight: 700; "
             "letter-spacing: 1px; text-align: left; border: none; padding: 0;"
         )
         heading_row.addWidget(heading)
         heading_row.addStretch()
         layout.addLayout(heading_row)
+        self.quadrant_title_labels.append(heading)
+        self.quadrant_markers.append(marker)
 
         detail = QLabel(description)
         detail.setStyleSheet(
