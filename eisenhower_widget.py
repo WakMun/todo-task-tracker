@@ -530,8 +530,8 @@ class EisenhowerWidget(QWidget):
             <p>A lightweight, local-only task tracker for organizing work by
             urgency and importance. Tasks and settings stay in a local SQLite
             database on this computer.</p>
-            <p>Licensed under the GNU General Public License, version 3.0 only
-            (GPL-3.0-only). The license terms are available at
+            <p>Licensed under the GNU General Public License, either version 3
+            or (at your option) any later version (GPL-3.0-or-later). The license terms are available at
             <a href="https://www.gnu.org/licenses/gpl-3.0.html">gnu.org/licenses/gpl-3.0.html</a>.</p>
             """,
         )

@@ -76,6 +76,7 @@ from version control. Do not commit personal task data.
 
 ## License
 
-This project is licensed under the GNU General Public License version 3.0 only
-(GPL-3.0-only). See [LICENSE](./LICENSE) for the license notice and the link to
-the full license terms.
+This project is licensed under the GNU General Public License, either version 3
+or (at your option) any later version (GPL-3.0-or-later). See
+[LICENSE](./LICENSE) for the license notice and the link to the full license
+terms.
