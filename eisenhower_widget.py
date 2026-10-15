@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+import uuid
 from pathlib import Path
 from typing import Callable
 
-from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtCore import QByteArray, QMimeData, QPoint, Qt
+from PyQt6.QtGui import QBrush, QColor, QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QColorDialog,
@@ -68,6 +69,9 @@ class InlineTaskEditor(QLineEdit):
 
 
 class TaskTree(QTreeWidget):
+    TASK_MIME_TYPE = "application/x-eisenhower-task"
+    _active_drags: dict[str, tuple[TaskTree, QTreeWidgetItem]] = {}
+
     def __init__(self, quadrant_id: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.quadrant_id = quadrant_id
@@ -83,6 +87,11 @@ class TaskTree(QTreeWidget):
         self.setUniformRowHeights(True)
         self.setEditTriggers(QTreeWidget.EditTrigger.EditKeyPressed)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QTreeWidget.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.itemChanged.connect(self._item_changed)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
@@ -99,6 +108,81 @@ class TaskTree(QTreeWidget):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def startDrag(self, supported_actions: Qt.DropAction) -> None:
+        item = self.currentItem()
+        if item is None:
+            return
+
+        token = uuid.uuid4().hex
+        self._active_drags[token] = (self, item)
+        mime_data = QMimeData()
+        mime_data.setData(self.TASK_MIME_TYPE, QByteArray(token.encode("ascii")))
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+        try:
+            drag.exec(
+                supported_actions & Qt.DropAction.MoveAction,
+                Qt.DropAction.MoveAction,
+            )
+        finally:
+            self._active_drags.pop(token, None)
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        self._accept_cross_quadrant_drag(event)
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        self._accept_cross_quadrant_drag(event)
+
+    def _accept_cross_quadrant_drag(self, event) -> None:
+        mime_data = event.mimeData()
+        if not mime_data.hasFormat(self.TASK_MIME_TYPE):
+            event.ignore()
+            return
+
+        token = bytes(mime_data.data(self.TASK_MIME_TYPE)).decode("ascii")
+        source = self._active_drags.get(token)
+        if source is None or source[0] is self:
+            event.ignore()
+            return
+
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        mime_data = event.mimeData()
+        if not mime_data.hasFormat(self.TASK_MIME_TYPE):
+            event.ignore()
+            return
+
+        token = bytes(mime_data.data(self.TASK_MIME_TYPE)).decode("ascii")
+        source = self._active_drags.get(token)
+        if source is None or source[0] is self:
+            event.ignore()
+            return
+
+        source_tree, item = source
+        source_parent = item.parent()
+        if source_parent is None:
+            source_index = source_tree.indexOfTopLevelItem(item)
+            if source_index < 0:
+                event.ignore()
+                return
+            moved_item = source_tree.takeTopLevelItem(source_index)
+        else:
+            source_index = source_parent.indexOfChild(item)
+            if source_index < 0:
+                event.ignore()
+                return
+            moved_item = source_parent.takeChild(source_index)
+
+        self.addTopLevelItem(moved_item)
+        self.scrollToItem(moved_item)
+        self._style_item(moved_item)
+        if self._persist_callback is not None:
+            self._persist_callback()
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
 
     def _show_inline_editor(
         self, position: QPoint, parent_item: QTreeWidgetItem | None = None
