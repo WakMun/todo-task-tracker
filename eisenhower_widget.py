@@ -12,6 +12,7 @@ from PyQt6.QtCore import QByteArray, QMimeData, QPoint, Qt
 from PyQt6.QtGui import QBrush, QColor, QDrag, QDropEvent, QDragEnterEvent, QDragMoveEvent
 from PyQt6.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QColorDialog,
     QFrame,
     QGridLayout,
@@ -142,7 +143,7 @@ class TaskTree(QTreeWidget):
 
         token = bytes(mime_data.data(self.TASK_MIME_TYPE)).decode("ascii")
         source = self._active_drags.get(token)
-        if source is None or source[0] is self:
+        if source is None:
             event.ignore()
             return
 
@@ -157,11 +158,19 @@ class TaskTree(QTreeWidget):
 
         token = bytes(mime_data.data(self.TASK_MIME_TYPE)).decode("ascii")
         source = self._active_drags.get(token)
-        if source is None or source[0] is self:
+        if source is None:
             event.ignore()
             return
 
         source_tree, item = source
+        if source_tree is self:
+            if self._reorder_within_quadrant(item, event.position().toPoint()):
+                event.setDropAction(Qt.DropAction.MoveAction)
+                event.accept()
+            else:
+                event.ignore()
+            return
+
         source_parent = item.parent()
         if source_parent is None:
             source_index = source_tree.indexOfTopLevelItem(item)
@@ -183,6 +192,65 @@ class TaskTree(QTreeWidget):
             self._persist_callback()
         event.setDropAction(Qt.DropAction.MoveAction)
         event.accept()
+
+    def _reorder_within_quadrant(
+        self, item: QTreeWidgetItem, position: QPoint
+    ) -> bool:
+        parent = item.parent()
+        if parent is None:
+            siblings = [
+                self.topLevelItem(index) for index in range(self.topLevelItemCount())
+            ]
+        else:
+            siblings = [parent.child(index) for index in range(parent.childCount())]
+        if item not in siblings:
+            return False
+
+        target = self.itemAt(position)
+        indicator = self.dropIndicatorPosition()
+        if target is None or indicator == QAbstractItemView.DropIndicatorPosition.OnViewport:
+            destination_index = len(siblings)
+        else:
+            if target is item:
+                return True
+            if target.parent() is not parent:
+                return False
+            target_index = siblings.index(target)
+            if indicator == QAbstractItemView.DropIndicatorPosition.OnItem:
+                item_rect = self.visualItemRect(target)
+                indicator = (
+                    QAbstractItemView.DropIndicatorPosition.AboveItem
+                    if position.y() < item_rect.center().y()
+                    else QAbstractItemView.DropIndicatorPosition.BelowItem
+                )
+            if indicator == QAbstractItemView.DropIndicatorPosition.AboveItem:
+                destination_index = target_index
+            elif indicator == QAbstractItemView.DropIndicatorPosition.BelowItem:
+                destination_index = target_index + 1
+            else:
+                return False
+
+        source_index = siblings.index(item)
+        siblings.pop(source_index)
+        if source_index < destination_index:
+            destination_index -= 1
+        destination_index = max(0, min(destination_index, len(siblings)))
+        siblings.insert(destination_index, item)
+        if parent is None:
+            for index in range(self.topLevelItemCount() - 1, -1, -1):
+                self.takeTopLevelItem(index)
+            for sibling in siblings:
+                self.addTopLevelItem(sibling)
+        else:
+            for index in range(parent.childCount() - 1, -1, -1):
+                parent.takeChild(index)
+            for sibling in siblings:
+                parent.addChild(sibling)
+        self.setCurrentItem(item)
+        self.scrollToItem(item)
+        if self._persist_callback is not None:
+            self._persist_callback()
+        return True
 
     def _show_inline_editor(
         self, position: QPoint, parent_item: QTreeWidgetItem | None = None

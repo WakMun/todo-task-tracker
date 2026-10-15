@@ -27,7 +27,9 @@ python .\eisenhower_widget.py
 The widget has a frameless, semi-transparent 2-by-2 matrix. Drag the header to
 move it. Double-click a quadrant to add a task. Right-click a task to add a
 subtask or rename it. Checkboxes complete tasks; completed siblings move below
-incomplete siblings. Drag a task to another quadrant to move it there; any
+incomplete siblings. Drag tasks within a quadrant to reorder siblings; the
+drop indicator places them above or below another task, and tasks retain their
+current hierarchy level. Drag a task to another quadrant to move it there; any
 subtasks move with it. Use the three-line menu in the title bar to choose and
 persist a separate title color for each quadrant, reset all tasks and settings,
 or view the About information. The settings menu is at the top right, beside
