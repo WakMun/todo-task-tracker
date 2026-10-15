@@ -14,14 +14,17 @@ from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QColorDialog,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMenu,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -409,6 +412,138 @@ class DragHeader(QWidget):
         super().mouseReleaseEvent(event)
 
 
+class SettingsDialog(QDialog):
+    def __init__(
+        self,
+        parent: QWidget,
+        colors: list[str],
+        on_choose_color: Callable[[int], None],
+        on_reset: Callable[[], None],
+    ) -> None:
+        super().__init__(parent)
+        self._colors = colors
+        self._on_choose_color = on_choose_color
+        self._on_reset = on_reset
+        self._color_buttons: list[QPushButton] = []
+
+        self.setWindowTitle("Settings")
+        self.setMinimumSize(560, 360)
+        self.resize(640, 400)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(14)
+        heading = QLabel("Settings")
+        heading.setStyleSheet("font-size: 18px; font-weight: 700;")
+        layout.addWidget(heading)
+
+        content = QHBoxLayout()
+        content.setSpacing(18)
+        self.sections = QListWidget()
+        self.sections.setObjectName("settingsSections")
+        self.sections.addItems(["Colors", "Reset"])
+        self.sections.setFixedWidth(130)
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self._build_colors_page())
+        self.pages.addWidget(self._build_reset_page())
+        self.sections.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.sections.setCurrentRow(0)
+        content.addWidget(self.sections)
+        content.addWidget(self.pages, 1)
+        layout.addLayout(content, 1)
+
+        done_button = QPushButton("Done")
+        done_button.setObjectName("doneButton")
+        done_button.clicked.connect(self.accept)
+        layout.addWidget(done_button, 0, Qt.AlignmentFlag.AlignRight)
+
+        self.setStyleSheet(
+            """
+            QDialog { color: #e7eaf0; background: #171d29; font-family: "Segoe UI"; }
+            QLabel { color: #e7eaf0; }
+            QListWidget#settingsSections { color: #bdc5d2; background: #202735; border: 1px solid #333d4d; border-radius: 8px; padding: 4px; }
+            QListWidget#settingsSections::item { padding: 9px 10px; border-radius: 5px; }
+            QListWidget#settingsSections::item:selected { color: white; background: #394b65; }
+            QFrame#settingsPage { background: #202735; border: 1px solid #333d4d; border-radius: 8px; }
+            QPushButton { color: #e7eaf0; background: #303b4d; border: 1px solid #455268; border-radius: 6px; padding: 7px 12px; }
+            QPushButton:hover { background: #3c4c63; }
+            QPushButton#resetButton { color: #ffd1d1; background: #572e37; border-color: #78404b; }
+            QPushButton#doneButton { min-width: 80px; }
+            """
+        )
+
+    def _build_colors_page(self) -> QWidget:
+        page = QFrame()
+        page.setObjectName("settingsPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("Quadrant title colors")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        layout.addWidget(title)
+        description = QLabel("Choose a separate title color for each quadrant.")
+        description.setStyleSheet("color: #aab1bd;")
+        layout.addWidget(description)
+
+        for quadrant_id, (name, _, _) in enumerate(QUADRANTS):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(name.title()), 1)
+            button = QPushButton()
+            button.setMinimumWidth(100)
+            button.clicked.connect(
+                lambda checked=False, selected_id=quadrant_id: self._choose_color(
+                    selected_id
+                )
+            )
+            self._color_buttons.append(button)
+            row.addWidget(button)
+            layout.addLayout(row)
+        layout.addStretch(1)
+        self.refresh_colors()
+        return page
+
+    def _build_reset_page(self) -> QWidget:
+        page = QFrame()
+        page.setObjectName("settingsPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("Reset user data")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        layout.addWidget(title)
+        description = QLabel(
+            "Delete all tasks and subtasks and restore the default quadrant "
+            "colors. This cannot be undone."
+        )
+        description.setWordWrap(True)
+        description.setStyleSheet("color: #aab1bd;")
+        layout.addWidget(description)
+        reset_button = QPushButton("Reset user data")
+        reset_button.setObjectName("resetButton")
+        reset_button.clicked.connect(self._reset_data)
+        layout.addWidget(reset_button, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addStretch(1)
+        return page
+
+    def _choose_color(self, quadrant_id: int) -> None:
+        self._on_choose_color(quadrant_id)
+        self.refresh_colors()
+
+    def _reset_data(self) -> None:
+        self._on_reset()
+        self.refresh_colors()
+
+    def refresh_colors(self) -> None:
+        for button, color in zip(self._color_buttons, self._colors):
+            button.setText(color.upper())
+            button.setStyleSheet(
+                f"background: {color}; color: #111827; "
+                "font-weight: 600; border: 1px solid rgba(255,255,255,50);"
+            )
+
+
 class EisenhowerWidget(QWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -515,6 +650,15 @@ class EisenhowerWidget(QWidget):
             f"background: {color_name}; border-radius: 4px;"
         )
 
+    def _show_settings_dialog(self) -> None:
+        dialog = SettingsDialog(
+            self,
+            self.quadrant_colors,
+            self._choose_quadrant_color,
+            self._confirm_reset_user_data,
+        )
+        dialog.exec()
+
     def _build_ui(self) -> None:
         root = QFrame(self)
         root.setObjectName("root")
@@ -595,24 +739,9 @@ class EisenhowerWidget(QWidget):
             return
 
         menu = QMenu(self)
-        colors_menu = menu.addMenu("Change colors")
-        if colors_menu is not None:
-            for quadrant_id, (name, _, _) in enumerate(QUADRANTS):
-                action = colors_menu.addAction(f"{name.title()} title color…")
-                if action is None:
-                    continue
-
-                def choose_color(selected_id: int) -> Callable[[], None]:
-                    def open_dialog() -> None:
-                        self._choose_quadrant_color(selected_id)
-
-                    return open_dialog
-
-                action.triggered.connect(choose_color(quadrant_id))
-        menu.addSeparator()
-        reset_action = menu.addAction("Reset user data")
-        if reset_action is not None:
-            reset_action.triggered.connect(self._confirm_reset_user_data)
+        settings_action = menu.addAction("Settings")
+        if settings_action is not None:
+            settings_action.triggered.connect(self._show_settings_dialog)
         about_action = menu.addAction("About")
         if about_action is not None:
             about_action.triggered.connect(self._show_about)
@@ -663,7 +792,7 @@ class EisenhowerWidget(QWidget):
         for tree in self.trees:
             tree.clear()
         self._loading = False
-        self.quadrant_colors = default_colors
+        self.quadrant_colors[:] = default_colors
         for quadrant_id, color in enumerate(default_colors):
             self.quadrant_title_labels[quadrant_id].setStyleSheet(
                 f"color: {color}; font-size: 11px; font-weight: 700; "

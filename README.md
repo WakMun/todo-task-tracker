@@ -30,10 +30,11 @@ subtask or rename it. Checkboxes complete tasks; completed siblings move below
 incomplete siblings. Drag tasks within a quadrant to reorder siblings; the
 drop indicator places them above or below another task, and tasks retain their
 current hierarchy level. Drag a task to another quadrant to move it there; any
-subtasks move with it. Use the three-line menu in the title bar to choose and
-persist a separate title color for each quadrant, reset all tasks and settings,
-or view the About information. The settings menu is at the top right, beside
-the close button. Reset requires confirmation and cannot be undone.
+subtasks move with it. The three-line menu in the title bar has **Settings**
+and **About**. Settings opens a screen with a left-side section list: **Colors**
+lets you choose and persist a separate title color for each quadrant, and
+**Reset** asks for confirmation before clearing all tasks and restoring default
+colors. The menu is at the top right, beside the close button.
 
 ## Desktop icon and startup
 
