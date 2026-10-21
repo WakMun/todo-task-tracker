@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import sys
 import uuid
@@ -16,7 +17,6 @@ from PyQt6.QtWidgets import (
     QColorDialog,
     QDialog,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -86,6 +86,8 @@ class TaskTree(QTreeWidget):
 
         self.setColumnCount(1)
         self.setHeaderHidden(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setRootIsDecorated(True)
         self.setIndentation(18)
         self.setUniformRowHeights(True)
@@ -320,6 +322,8 @@ class TaskTree(QTreeWidget):
         menu = QMenu(self)
         add_subtask = menu.addAction("Add Subtask")
         rename = menu.addAction("Rename Task")
+        menu.addSeparator()
+        delete = menu.addAction("Delete Subtask" if item.parent() else "Delete Task")
         selected = menu.exec(self.viewport().mapToGlobal(position))
         if selected is add_subtask:
             self._show_inline_editor(
@@ -327,6 +331,25 @@ class TaskTree(QTreeWidget):
             )
         elif selected is rename:
             self.editItem(item, 0)
+        elif selected is delete:
+            self._delete_item(item)
+
+    def _delete_item(self, item: QTreeWidgetItem) -> None:
+        parent = item.parent()
+        if parent is None:
+            index = self.indexOfTopLevelItem(item)
+            if index < 0:
+                return
+            removed_item = self.takeTopLevelItem(index)
+        else:
+            index = parent.indexOfChild(item)
+            if index < 0:
+                return
+            removed_item = parent.takeChild(index)
+
+        del removed_item
+        if self._persist_callback is not None:
+            self._persist_callback()
 
     def _item_changed(self, item: QTreeWidgetItem, column: int) -> None:
         if self._busy:
@@ -544,10 +567,121 @@ class SettingsDialog(QDialog):
             )
 
 
+class QuadrantResizeHandle(QFrame):
+    def __init__(
+        self,
+        on_move: Callable[[QPoint], None],
+        on_release: Callable[[], None],
+        parent: QWidget,
+    ) -> None:
+        super().__init__(parent)
+        self._on_move = on_move
+        self._on_release = on_release
+        self.setFixedSize(24, 24)
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+        self.setToolTip("Drag to resize the quadrants")
+        self.setStyleSheet(
+            "background: #313b4b; border: 1px solid #65738a; border-radius: 6px;"
+        )
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            parent = self.parentWidget()
+            if parent is not None:
+                self._on_move(parent.mapFromGlobal(event.globalPosition().toPoint()))
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._on_release()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class QuadrantGrid(QWidget):
+    def __init__(
+        self,
+        cards: list[QFrame],
+        horizontal_ratio: float = 0.5,
+        vertical_ratio: float = 0.5,
+        on_layout_changed: Callable[[], None] | None = None,
+    ) -> None:
+        super().__init__()
+        self._cards = cards
+        for card in self._cards:
+            card.setParent(self)
+        self._horizontal_ratio = min(0.8, max(0.2, horizontal_ratio))
+        self._vertical_ratio = min(0.8, max(0.2, vertical_ratio))
+        self._on_layout_changed = on_layout_changed
+        self._gap = 12
+        self._handle = QuadrantResizeHandle(
+            self._resize_from_point, self._save_layout, self
+        )
+        self._update_card_geometry()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_card_geometry()
+
+    def set_ratios(self, horizontal_ratio: float, vertical_ratio: float) -> None:
+        self._horizontal_ratio = min(0.8, max(0.2, horizontal_ratio))
+        self._vertical_ratio = min(0.8, max(0.2, vertical_ratio))
+        self._update_card_geometry()
+
+    def _save_layout(self) -> None:
+        if self._on_layout_changed is not None:
+            self._on_layout_changed()
+
+    def _resize_from_point(self, point: QPoint) -> None:
+        available_width = max(1, self.width() - self._gap)
+        available_height = max(1, self.height() - self._gap)
+        self._horizontal_ratio = min(
+            0.8, max(0.2, (point.x() - self._gap // 2) / available_width)
+        )
+        self._vertical_ratio = min(
+            0.8, max(0.2, (point.y() - self._gap // 2) / available_height)
+        )
+        self._update_card_geometry()
+
+    def _update_card_geometry(self) -> None:
+        width = self.width()
+        height = self.height()
+        available_width = max(0, width - self._gap)
+        available_height = max(0, height - self._gap)
+        left_width = int(available_width * self._horizontal_ratio)
+        top_height = int(available_height * self._vertical_ratio)
+        right_x = left_width + self._gap
+        bottom_y = top_height + self._gap
+
+        geometries = (
+            (0, 0, left_width, top_height),
+            (right_x, 0, width - right_x, top_height),
+            (0, bottom_y, left_width, height - bottom_y),
+            (right_x, bottom_y, width - right_x, height - bottom_y),
+        )
+        for card, geometry in zip(self._cards, geometries):
+            card.setGeometry(*geometry)
+
+        self._handle.move(
+            left_width + (self._gap - self._handle.width()) // 2,
+            top_height + (self._gap - self._handle.height()) // 2,
+        )
+        self._handle.raise_()
+
+
 class EisenhowerWidget(QWidget):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Eisenhower Matrix")
+        self.setWindowTitle("Todo Tracker")
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnBottomHint
@@ -563,10 +697,12 @@ class EisenhowerWidget(QWidget):
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._initialize_database()
         self.quadrant_colors = self._load_quadrant_colors()
+        self._horizontal_ratio, self._vertical_ratio = self._load_quadrant_layout()
 
         self.trees: list[TaskTree] = []
         self.quadrant_title_labels: list[QLabel] = []
         self.quadrant_markers: list[QFrame] = []
+        self.quadrant_grid: QuadrantGrid | None = None
         self._build_ui()
         self._load_tasks()
 
@@ -602,6 +738,61 @@ class EisenhowerWidget(QWidget):
                     (quadrant_id, color)
                     for quadrant_id, (_, _, color) in enumerate(QUADRANTS)
                 ],
+            )
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS layout_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    horizontal_ratio REAL NOT NULL DEFAULT 0.5,
+                    vertical_ratio REAL NOT NULL DEFAULT 0.5
+                )
+                """
+            )
+            self._connection.execute(
+                """
+                INSERT OR IGNORE INTO layout_settings (id, horizontal_ratio, vertical_ratio)
+                VALUES (1, 0.5, 0.5)
+                """
+            )
+
+    def _load_quadrant_layout(self) -> tuple[float, float]:
+        row = self._connection.execute(
+            "SELECT horizontal_ratio, vertical_ratio FROM layout_settings WHERE id = 1"
+        ).fetchone()
+        if row is None:
+            return 0.5, 0.5
+        horizontal_ratio, vertical_ratio = row
+        if not (
+            math.isfinite(horizontal_ratio)
+            and math.isfinite(vertical_ratio)
+        ):
+            return 0.5, 0.5
+        return (
+            min(0.8, max(0.2, horizontal_ratio)),
+            min(0.8, max(0.2, vertical_ratio)),
+        )
+
+    def _save_quadrant_layout(self) -> None:
+        if self.quadrant_grid is None:
+            return
+        try:
+            with self._connection:
+                self._connection.execute(
+                    """
+                    UPDATE layout_settings
+                    SET horizontal_ratio = ?, vertical_ratio = ?
+                    WHERE id = 1
+                    """,
+                    (
+                        self.quadrant_grid._horizontal_ratio,
+                        self.quadrant_grid._vertical_ratio,
+                    ),
+                )
+        except sqlite3.Error as error:
+            QMessageBox.critical(
+                self,
+                "Could not save layout",
+                f"The quadrant sizes could not be saved:\n{self._db_path}\n\n{error}",
             )
 
     def _load_quadrant_colors(self) -> list[str]:
@@ -673,7 +864,7 @@ class EisenhowerWidget(QWidget):
         title_layout = QVBoxLayout(title)
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(2)
-        title_text = QLabel("EISENHOWER MATRIX")
+        title_text = QLabel("TODO TRACKER")
         title_text.setObjectName("windowTitle")
         subtitle = QLabel("Double-click a quadrant to add a task")
         subtitle.setObjectName("subtitle")
@@ -694,18 +885,16 @@ class EisenhowerWidget(QWidget):
         header_layout.addWidget(close_button)
         root_layout.addWidget(header)
 
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(12)
+        cards = []
         for quadrant_id, (name, description, _) in enumerate(QUADRANTS):
-            card = self._create_card(quadrant_id, name, description)
-            grid.addWidget(card, quadrant_id // 2, quadrant_id % 2)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        grid.setRowStretch(0, 1)
-        grid.setRowStretch(1, 1)
-        root_layout.addLayout(grid, 1)
+            cards.append(self._create_card(quadrant_id, name, description))
+        self.quadrant_grid = QuadrantGrid(
+            cards,
+            self._horizontal_ratio,
+            self._vertical_ratio,
+            self._save_quadrant_layout,
+        )
+        root_layout.addWidget(self.quadrant_grid, 1)
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -732,7 +921,6 @@ class EisenhowerWidget(QWidget):
             QMenu::item:selected { background: #3b4b63; }
             """
         )
-
     def _show_settings_menu(self) -> None:
         button = self.sender()
         if not isinstance(button, QPushButton):
@@ -780,6 +968,13 @@ class EisenhowerWidget(QWidget):
                         for quadrant_id, color in enumerate(default_colors)
                     ],
                 )
+                self._connection.execute(
+                    """
+                    UPDATE layout_settings
+                    SET horizontal_ratio = 0.5, vertical_ratio = 0.5
+                    WHERE id = 1
+                    """
+                )
         except sqlite3.Error as error:
             QMessageBox.critical(
                 self,
@@ -793,6 +988,10 @@ class EisenhowerWidget(QWidget):
             tree.clear()
         self._loading = False
         self.quadrant_colors[:] = default_colors
+        self._horizontal_ratio = 0.5
+        self._vertical_ratio = 0.5
+        if self.quadrant_grid is not None:
+            self.quadrant_grid.set_ratios(0.5, 0.5)
         for quadrant_id, color in enumerate(default_colors):
             self.quadrant_title_labels[quadrant_id].setStyleSheet(
                 f"color: {color}; font-size: 11px; font-weight: 700; "
@@ -968,6 +1167,7 @@ class EisenhowerWidget(QWidget):
             )
 
     def closeEvent(self, event) -> None:
+        self._save_quadrant_layout()
         self._connection.close()
         super().closeEvent(event)
 

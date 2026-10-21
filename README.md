@@ -34,7 +34,10 @@ subtasks move with it. The three-line menu in the title bar has **Settings**
 and **About**. Settings opens a screen with a left-side section list: **Colors**
 lets you choose and persist a separate title color for each quadrant, and
 **Reset** asks for confirmation before clearing all tasks and restoring default
-colors. The menu is at the top right, beside the close button.
+colors. Drag the handle at the center of the matrix to resize the quadrant
+columns and rows independently. The menu is at the top right, beside the close
+button. The quadrant proportions are saved locally and restored next time the
+widget starts.
 
 ## Desktop icon and startup
 
