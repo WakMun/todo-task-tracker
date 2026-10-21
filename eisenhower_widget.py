@@ -89,6 +89,7 @@ class TaskTree(QTreeWidget):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setRootIsDecorated(True)
+        self.setItemsExpandable(True)
         self.setIndentation(18)
         self.setUniformRowHeights(True)
         self.setEditTriggers(QTreeWidget.EditTrigger.EditKeyPressed)
@@ -168,94 +169,91 @@ class TaskTree(QTreeWidget):
             return
 
         source_tree, item = source
-        if source_tree is self:
-            if self._reorder_within_quadrant(item, event.position().toPoint()):
-                event.setDropAction(Qt.DropAction.MoveAction)
-                event.accept()
-            else:
-                event.ignore()
+        position = event.position().toPoint()
+        target = self.itemAt(position)
+        indicator = self.dropIndicatorPosition()
+
+        if target is item:
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
             return
 
-        source_parent = item.parent()
-        if source_parent is None:
-            source_index = source_tree.indexOfTopLevelItem(item)
-            if source_index < 0:
-                event.ignore()
-                return
-            moved_item = source_tree.takeTopLevelItem(source_index)
-        else:
-            source_index = source_parent.indexOfChild(item)
-            if source_index < 0:
-                event.ignore()
-                return
-            moved_item = source_parent.takeChild(source_index)
+        if target is not None:
+            ancestor = target
+            while ancestor is not None:
+                if ancestor is item:
+                    event.ignore()
+                    return
+                ancestor = ancestor.parent()
 
-        self.addTopLevelItem(moved_item)
+        drop_on_task = (
+            target is not None
+            and indicator == QAbstractItemView.DropIndicatorPosition.OnItem
+        )
+        if drop_on_task and target is not None:
+            if item.parent() is not None and target is item.parent():
+                event.setDropAction(Qt.DropAction.MoveAction)
+                event.accept()
+                return
+            root_anchor = None
+            insert_after = False
+        else:
+            root_anchor = target
+            while root_anchor is not None and root_anchor.parent() is not None:
+                root_anchor = root_anchor.parent()
+            insert_after = (
+                indicator == QAbstractItemView.DropIndicatorPosition.BelowItem
+            )
+
+        moved_item = source_tree._take_item(item)
+        if moved_item is None:
+            event.ignore()
+            return
+
+        if drop_on_task and target is not None:
+            target.addChild(moved_item)
+            self._update_child_indicator(target)
+            target.setExpanded(True)
+        else:
+            if root_anchor is None:
+                destination_index = self.topLevelItemCount()
+            else:
+                destination_index = self.indexOfTopLevelItem(root_anchor)
+                if destination_index < 0:
+                    destination_index = self.topLevelItemCount()
+                elif insert_after:
+                    destination_index += 1
+            self.insertTopLevelItem(destination_index, moved_item)
+
+        self.setCurrentItem(moved_item)
         self.scrollToItem(moved_item)
         self._style_item(moved_item)
-        if self._persist_callback is not None:
-            self._persist_callback()
+        persist = self._persist_callback or source_tree._persist_callback
+        if persist is not None:
+            persist()
         event.setDropAction(Qt.DropAction.MoveAction)
         event.accept()
 
-    def _reorder_within_quadrant(
-        self, item: QTreeWidgetItem, position: QPoint
-    ) -> bool:
+    def _take_item(self, item: QTreeWidgetItem) -> QTreeWidgetItem | None:
         parent = item.parent()
         if parent is None:
-            siblings = [
-                self.topLevelItem(index) for index in range(self.topLevelItemCount())
-            ]
-        else:
-            siblings = [parent.child(index) for index in range(parent.childCount())]
-        if item not in siblings:
-            return False
+            index = self.indexOfTopLevelItem(item)
+            return self.takeTopLevelItem(index) if index >= 0 else None
+        index = parent.indexOfChild(item)
+        if index < 0:
+            return None
+        taken_item = parent.takeChild(index)
+        self._update_child_indicator(parent)
+        return taken_item
 
-        target = self.itemAt(position)
-        indicator = self.dropIndicatorPosition()
-        if target is None or indicator == QAbstractItemView.DropIndicatorPosition.OnViewport:
-            destination_index = len(siblings)
-        else:
-            if target is item:
-                return True
-            if target.parent() is not parent:
-                return False
-            target_index = siblings.index(target)
-            if indicator == QAbstractItemView.DropIndicatorPosition.OnItem:
-                item_rect = self.visualItemRect(target)
-                indicator = (
-                    QAbstractItemView.DropIndicatorPosition.AboveItem
-                    if position.y() < item_rect.center().y()
-                    else QAbstractItemView.DropIndicatorPosition.BelowItem
-                )
-            if indicator == QAbstractItemView.DropIndicatorPosition.AboveItem:
-                destination_index = target_index
-            elif indicator == QAbstractItemView.DropIndicatorPosition.BelowItem:
-                destination_index = target_index + 1
-            else:
-                return False
-
-        source_index = siblings.index(item)
-        siblings.pop(source_index)
-        if source_index < destination_index:
-            destination_index -= 1
-        destination_index = max(0, min(destination_index, len(siblings)))
-        siblings.insert(destination_index, item)
-        if parent is None:
-            for index in range(self.topLevelItemCount() - 1, -1, -1):
-                self.takeTopLevelItem(index)
-            for sibling in siblings:
-                self.addTopLevelItem(sibling)
-        else:
-            for index in range(parent.childCount() - 1, -1, -1):
-                parent.takeChild(index)
-            for sibling in siblings:
-                parent.addChild(sibling)
-        self.setCurrentItem(item)
-        self.scrollToItem(item)
-        if self._persist_callback is not None:
-            self._persist_callback()
-        return True
+    @staticmethod
+    def _update_child_indicator(item: QTreeWidgetItem) -> None:
+        indicator = (
+            QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator
+            if item.childCount()
+            else QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicatorWhenChildless
+        )
+        item.setChildIndicatorPolicy(indicator)
 
     def _show_inline_editor(
         self, position: QPoint, parent_item: QTreeWidgetItem | None = None
@@ -307,6 +305,7 @@ class TaskTree(QTreeWidget):
             self.addTopLevelItem(item)
         else:
             parent_item.addChild(item)
+            self._update_child_indicator(parent_item)
             parent_item.setExpanded(True)
         self._style_item(item)
         self.scrollToItem(item)
@@ -346,6 +345,7 @@ class TaskTree(QTreeWidget):
             if index < 0:
                 return
             removed_item = parent.takeChild(index)
+            self._update_child_indicator(parent)
 
         del removed_item
         if self._persist_callback is not None:
@@ -915,7 +915,6 @@ class EisenhowerWidget(QWidget):
             QTreeWidget::item { min-height: 27px; padding: 2px 3px; border-radius: 5px; }
             QTreeWidget::item:hover { background: rgba(255,255,255,12); }
             QTreeWidget::item:selected { background: rgba(96,165,250,45); }
-            QTreeWidget::branch { background: transparent; }
             QLineEdit { color: #f3f4f6; background: #252d3b; border: 1px solid #65738a; border-radius: 6px; padding: 5px 7px; }
             QMenu { color: #e7eaf0; background: #252d3b; border: 1px solid #414b5b; }
             QMenu::item:selected { background: #3b4b63; }
@@ -1090,6 +1089,8 @@ class EisenhowerWidget(QWidget):
             else:
                 parent_item.addChild(item)
             items_by_id[task_id] = item
+            if parent_item is not None:
+                self.trees[quadrant_id]._update_child_indicator(parent_item)
             self.trees[quadrant_id]._style_item(item)
         self._loading = False
 

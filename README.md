@@ -27,11 +27,13 @@ python .\eisenhower_widget.py
 The widget has a frameless, semi-transparent 2-by-2 matrix. Drag the header to
 move it. Double-click a quadrant to add a task. Right-click a task to add a
 subtask or rename it. Checkboxes complete tasks; completed siblings move below
-incomplete siblings. Drag tasks within a quadrant to reorder siblings; the
-drop indicator places them above or below another task, and tasks retain their
-current hierarchy level. Drag a task to another quadrant to move it there; any
-subtasks move with it. The three-line menu in the title bar has **Settings**
-and **About**. Settings opens a screen with a left-side section list: **Colors**
+incomplete siblings. Tasks with subtasks show a native expand/collapse arrow
+on the left. Drag a task onto another task to make it a subtask. Drop it
+between tasks or on empty space to make it a main task; dragging a subtask
+away from its parent promotes it to a main task. These drop rules also apply
+when moving tasks between quadrants, and a moved task keeps its own subtasks.
+The three-line menu in the title bar has **Settings** and **About**. Settings
+opens a screen with a left-side section list: **Colors**
 lets you choose and persist a separate title color for each quadrant, and
 **Reset** asks for confirmation before clearing all tasks and restoring default
 colors. Drag the handle at the center of the matrix to resize the quadrant
